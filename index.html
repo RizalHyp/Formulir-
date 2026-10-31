@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<script>const API='GANTI_DENGAN_URL_WEB_APP_ANDA';</script>
 <html lang="id"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Formulir Rizal Hypno Center</title>
@@ -120,7 +121,6 @@ function doPost(e) {
 
 </script>
 <script>
-const API='GANTI_DENGAN_URL_WEB_APP_ANDA';
 const $=s=>document.querySelector(s),app=$('#app');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const tok=()=>sessionStorage.getItem('t');
@@ -138,7 +138,7 @@ function setup(){app.innerHTML=`<div class="card"><h2>Panduan Pemasangan</h2><p 
 <ol style="line-height:1.8;padding-left:20px"><li>Buka <b>script.google.com</b> → <b>Proyek baru</b>, hapus isi bawaan, lalu tempel kode di bawah (tombol Salin).</li>
 <li>Ganti <code>ADMIN_PASS</code> pada kode dengan password Anda.</li>
 <li>Klik <b>Deploy → New deployment → Web app</b>. Execute as: <b>Me</b>, Who has access: <b>Anyone</b>. Setujui izin Drive, lalu salin URL-nya.</li>
-<li>Di GitHub, edit file ini (ikon pensil), cari <code>const API='GANTI_DENGAN_URL_WEB_APP_ANDA'</code>, ganti dengan URL tadi, lalu <b>Commit</b>.</li>
+<li>Di GitHub, edit file ini (ikon pensil), lihat <b>baris ke-2</b> (paling atas), ganti tulisan <code>GANTI_DENGAN_URL_WEB_APP_ANDA</code> dengan URL tadi, lalu <b>Commit</b>.</li>
 <li>Tunggu ±1 menit, lalu buka <code>${esc(location.origin+location.pathname)}#admin</code> untuk login.</li></ol>
 <textarea id="gsc" rows="12" readonly style="font-family:monospace;font-size:12px"></textarea>
 <div class="row" style="margin-top:10px"><button id="cp">Salin Kode Server</button></div></div>`;
