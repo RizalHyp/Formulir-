@@ -55,6 +55,16 @@ function out(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 function doGet() { return out({ ok: true }); }
+function photoFolder() {
+  const p = folder(), it = p.getFoldersByName('Foto Identitas');
+  return it.hasNext() ? it.next() : p.createFolder('Foto Identitas');
+}
+function trashPhotos(rs) {
+  rs.forEach(r => Object.keys(r.data || {}).forEach(k => {
+    const v = r.data[k];
+    if (v && v.file) { try { DriveApp.getFileById(v.file).setTrashed(true); } catch (e) {} }
+  }));
+}
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
@@ -81,6 +91,15 @@ function doPost(e) {
       const f = load('forms.json').find(x => x.id === q.id && x.active !== false);
       if (!f) throw new Error('Formulir tidak ditemukan atau sudah ditutup.');
       f.fields.forEach(fl => { if (fl.req && !String((q.data || {})[fl.label] || '').trim()) throw new Error('Mohon isi: ' + fl.label); });
+      Object.keys(q.data || {}).forEach(k => {
+        const v = q.data[k];
+        if (v && typeof v === 'object' && v.img) {
+          if (v.img.indexOf('data:image/') !== 0 || v.img.length > 6000000) throw new Error('Foto tidak valid atau terlalu besar.');
+          const blob = Utilities.newBlob(Utilities.base64Decode(v.img.split(',')[1]), 'image/jpeg',
+            Utilities.getUuid().slice(0, 6) + '_' + String(v.name).replace(/[^\w.\-]/g, '_'));
+          q.data[k] = { file: photoFolder().createFile(blob).getId(), name: String(v.name) };
+        }
+      });
       const r = load('responses.json');
       r.push({ id: Utilities.getUuid(), formId: f.id, at: new Date().toISOString(), data: q.data });
       save('responses.json', r);
@@ -100,6 +119,7 @@ function doPost(e) {
       return out({ ok: true, id: f.id });
     }
     if (a === 'deleteForm') {
+      trashPhotos(load('responses.json').filter(x => x.formId === q.id));
       save('forms.json', load('forms.json').filter(x => x.id !== q.id));
       save('responses.json', load('responses.json').filter(x => x.formId !== q.id));
       return out({ ok: true });
@@ -108,8 +128,14 @@ function doPost(e) {
       return out({ ok: true, responses: load('responses.json').filter(x => x.formId === q.id).reverse() });
     }
     if (a === 'deleteResponse') {
+      trashPhotos(load('responses.json').filter(x => x.id === q.id));
       save('responses.json', load('responses.json').filter(x => x.id !== q.id));
       return out({ ok: true });
+    }
+    if (a === 'getFile') {
+      const f = DriveApp.getFileById(q.fid), p = f.getParents();
+      if (!p.hasNext() || p.next().getId() !== photoFolder().getId()) throw new Error('File tidak diizinkan.');
+      return out({ ok: true, img: 'data:image/jpeg;base64,' + Utilities.base64Encode(f.getBlob().getBytes()) });
     }
     throw new Error('Aksi tidak dikenal.');
   } catch (err) {
@@ -126,7 +152,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const tok=()=>sessionStorage.getItem('t');
 async function api(action,d={}){try{const r=await fetch(API,{method:'POST',body:JSON.stringify({action,token:tok(),...d})});const j=await r.json();
  if(!j.ok&&/Sesi berakhir/.test(j.error||'')){sessionStorage.removeItem('t');location.hash='admin';route();}return j}catch(e){return{ok:false,error:'Gagal terhubung ke server.'}}}
-const TYPES={text:'Teks singkat',textarea:'Paragraf',number:'Angka',date:'Tanggal',tel:'No. telepon',email:'Email',select:'Pilihan (dropdown)',radio:'Pilihan tunggal',checkbox:'Pilihan ganda'};
+const TYPES={text:'Teks singkat',textarea:'Paragraf',number:'Angka',date:'Tanggal',tel:'No. telepon',email:'Email',select:'Pilihan (dropdown)',radio:'Pilihan tunggal',checkbox:'Pilihan ganda',file:'Unggah foto (KTP/identitas)'};
 let forms=[],edit=null;
 
 function route(){if(API.startsWith('GANTI')||location.hash==='#setup')return setup();const id=new URLSearchParams(location.search).get('f');
@@ -149,19 +175,23 @@ async function publicForm(id){app.innerHTML='<div class="card mut">Memuat formul
  const r=await api('getForm',{id});if(!r.ok)return app.innerHTML=`<div class="card err">${esc(r.error)}</div>`;const f=r.form;
  app.innerHTML=`<div class="card"><span class="badge">${f.type==='terapi'?'Formulir Terapi':'Formulir Pelatihan'}</span><h2 style="margin-top:8px">${esc(f.title)}</h2><p class="mut">${esc(f.desc)}</p>
  <div id="ff">${f.fields.map((x,i)=>fieldHTML(x,i)).join('')}</div><div id="msg" class="err"></div><button id="send" style="margin-top:14px">Kirim Formulir</button></div>`;
+ document.querySelectorAll('input[type=file]').forEach(e=>e.onchange=()=>{if(e.files[0]&&e.files[0].size>3145728){$('#msg').textContent='Ukuran foto terlalu besar. Maksimal 3 MB.';e.value=''}else $('#msg').textContent=''});
  $('#send').onclick=async()=>{const data={};
   for(const [i,x] of f.fields.entries()){let v;
    if(x.type==='checkbox')v=[...document.querySelectorAll(`[name=f${i}]:checked`)].map(e=>e.value).join(', ');
    else if(x.type==='radio')v=(document.querySelector(`[name=f${i}]:checked`)||{}).value||'';
+   else if(x.type==='file'){const fl=$(`[name=f${i}]`).files[0];if(fl&&fl.size>3145728)return $('#msg').textContent='Ukuran foto maksimal 3 MB: '+x.label;v=fl?await shrink(fl):''}
    else v=$(`[name=f${i}]`).value.trim();
    if(x.req&&!v)return $('#msg').textContent='Mohon isi: '+x.label;data[x.label]=v;}
-  $('#send').disabled=true;$('#msg').textContent='';const r=await api('submit',{id,data});
+  $('#send').disabled=true;$('#send').textContent='Mengirim…';$('#msg').textContent='';const r=await api('submit',{id,data});
   if(r.ok)app.innerHTML='<div class="card" style="text-align:center"><h2>Terima kasih</h2><p class="ok">Formulir Anda berhasil dikirim.</p></div>';
-  else{$('#msg').textContent=r.error;$('#send').disabled=false}};}
+  else{$('#msg').textContent=r.error;$('#send').disabled=false;$('#send').textContent='Kirim Formulir'}};}
+function shrink(f){return new Promise(res=>{const im=new Image(),u=URL.createObjectURL(f);im.onload=()=>{const s=Math.min(1,1400/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);res({name:f.name,img:c.toDataURL('image/jpeg',.82)})};im.onerror=()=>res('');im.src=u})}
 function fieldHTML(x,i){const o=(x.options||'').split('\n').map(s=>s.trim()).filter(Boolean);let h;
  if(x.type==='textarea')h=`<textarea name="f${i}" rows="4"></textarea>`;
  else if(x.type==='select')h=`<select name="f${i}"><option value="">— Pilih —</option>${o.map(v=>`<option>${esc(v)}</option>`).join('')}</select>`;
  else if(x.type==='radio'||x.type==='checkbox')h=o.map(v=>`<label class="opt"><input type="${x.type}" name="f${i}" value="${esc(v)}">${esc(v)}</label>`).join('');
+ else if(x.type==='file')h=`<input type="file" accept="image/*" name="f${i}"><div class="mut" style="margin-top:4px">Format JPG/PNG, maksimal 3 MB. Foto disimpan aman di Google Drive pemilik formulir.</div>`;
  else h=`<input type="${x.type}" name="f${i}">`;
  return `<label>${esc(x.label)}${x.req?' <i>*</i>':''}</label>${h}`}
 
@@ -196,13 +226,15 @@ function builder(f){edit=f;const draw=()=>{
  $('#af').onclick=()=>{sync();f.fields.push({label:'',type:'text',req:false});draw()};$('#cx').onclick=dash;
  $('#sv').onclick=async()=>{sync();if(!f.title.trim()||f.fields.some(x=>!x.label.trim()))return $('#msg').textContent='Judul dan semua pertanyaan harus diisi.';
   const r=await api('saveForm',{form:f});r.ok?dash():$('#msg').textContent=r.error}};draw()}
+const cell=v=>v&&v.file?`<button class="g" data-ph="${esc(v.file)}">Lihat foto</button>`:esc(v);
 async function responses(f){app.innerHTML='<div class="card mut">Memuat data…</div>';const r=await api('listResponses',{id:f.id});if(!r.ok)return;const R=r.responses;
  app.innerHTML=`<div class="row sp" style="margin-bottom:12px"><h2 style="margin:0">${esc(f.title)}</h2><div class="row"><button class="gold" id="csv">Unduh CSV</button><button class="g" id="bk">← Kembali</button></div></div>
  <div class="card tw"><table><tr><th>Waktu</th>${f.fields.map(x=>`<th>${esc(x.label)}</th>`).join('')}<th></th></tr>
- ${R.map(x=>`<tr><td>${new Date(x.at).toLocaleString('id-ID')}</td>${f.fields.map(y=>`<td>${esc(x.data[y.label])}</td>`).join('')}<td><button class="d" data-id="${x.id}">Hapus</button></td></tr>`).join('')||`<tr><td colspan="${f.fields.length+2}" class="mut">Belum ada respon.</td></tr>`}</table></div>`;
+ ${R.map(x=>`<tr><td>${new Date(x.at).toLocaleString('id-ID')}</td>${f.fields.map(y=>`<td>${cell(x.data[y.label])}</td>`).join('')}<td><button class="d" data-id="${x.id}">Hapus</button></td></tr>`).join('')||`<tr><td colspan="${f.fields.length+2}" class="mut">Belum ada respon.</td></tr>`}</table></div>`;
  $('#bk').onclick=dash;
- $('#csv').onclick=()=>{const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const rows=[['Waktu',...f.fields.map(x=>x.label)],...R.map(x=>[x.at,...f.fields.map(y=>x.data[y.label])])];
+ app.querySelectorAll('[data-ph]').forEach(b=>b.onclick=async()=>{b.textContent='Memuat…';const r=await api('getFile',{fid:b.dataset.ph});b.textContent='Lihat foto';if(!r.ok)return alert(r.error);const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9';o.innerHTML='<img style="max-width:100%;max-height:100%;border-radius:6px">';o.firstChild.src=r.img;o.onclick=()=>o.remove();document.body.appendChild(o)});
+ $('#csv').onclick=()=>{const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const rows=[['Waktu',...f.fields.map(x=>x.label)],...R.map(x=>[x.at,...f.fields.map(y=>{const v=x.data[y.label];return v&&v.name?v.name+' (foto di Drive)':v})])];
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(q).join(',')).join('\n')],{type:'text/csv'}));a.download=f.title+'.csv';a.click()};
- app.querySelectorAll('td button').forEach(b=>b.onclick=async()=>{if(confirm('Hapus respon ini?')){await api('deleteResponse',{id:b.dataset.id});responses(f)}})}
+ app.querySelectorAll('td button.d').forEach(b=>b.onclick=async()=>{if(confirm('Hapus respon ini?')){await api('deleteResponse',{id:b.dataset.id});responses(f)}})}
 route();
 </script></body></html>
