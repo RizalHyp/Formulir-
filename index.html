@@ -127,6 +127,13 @@ function doPost(e) {
     if (a === 'listResponses') {
       return out({ ok: true, responses: load('responses.json').filter(x => x.formId === q.id).reverse() });
     }
+    if (a === 'setTerapi') {
+      const r = load('responses.json'), x = r.find(y => y.id === q.id);
+      if (!x) throw new Error('Data tidak ditemukan.');
+      x.terapi = String(q.date || '').slice(0, 10);
+      save('responses.json', r);
+      return out({ ok: true });
+    }
     if (a === 'deleteResponse') {
       trashPhotos(load('responses.json').filter(x => x.id === q.id));
       save('responses.json', load('responses.json').filter(x => x.id !== q.id));
@@ -226,14 +233,32 @@ function builder(f){edit=f;const draw=()=>{
  $('#af').onclick=()=>{sync();f.fields.push({label:'',type:'text',req:false});draw()};$('#cx').onclick=dash;
  $('#sv').onclick=async()=>{sync();if(!f.title.trim()||f.fields.some(x=>!x.label.trim()))return $('#msg').textContent='Judul dan semua pertanyaan harus diisi.';
   const r=await api('saveForm',{form:f});r.ok?dash():$('#msg').textContent=r.error}};draw()}
+const D=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
+const plus=(s,n)=>{const d=D(s);d.setDate(d.getDate()+n);return d};
+const fmt=d=>d.toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+const nxt=s=>s?`7 hari: <b>${fmt(plus(s,7))}</b><br>10 hari: <b>${fmt(plus(s,10))}</b>`:'<span class="mut">Isi tanggal terapi</span>';
+const waNum=v=>{let n=String(v||'').replace(/\D/g,'');if(n.startsWith('0'))n='62'+n.slice(1);else if(n.startsWith('8'))n='62'+n;return n};
+function remind(f,x){
+ if(!x.terapi)return alert('Isi dulu Tanggal Terapi pada baris ini.');
+ const tf=f.fields.find(y=>y.type==='tel')||f.fields.find(y=>/whatsapp|wa\b|hp|telepon|telp/i.test(y.label));
+ const num=tf?waNum(x.data[tf.label]):'';
+ const msg=`Salam Sehat Jiwa Raga, izin mengingatkan terapi Anda berikutnya jatuh pada tanggal ${fmt(plus(x.terapi,7))} (7 hari). Atau mau ambil yang 10 hari, berarti jatuh pada tanggal ${fmt(plus(x.terapi,10))}. Segera amankan waktu terapi Anda, yuk booking time H-3 sebelum jatuh jadwal terapinya.`;
+ const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9';
+ o.innerHTML=`<div class="card" style="max-width:520px;width:100%;margin:0"><h2 style="font-size:22px">Pengingat Booking</h2><p class="mut">Kirim ke: <b>${num?'+'+num:'(nomor WhatsApp tidak ditemukan)'}</b></p><textarea rows="8"></textarea><div class="row" style="margin-top:12px"><button class="gold" id="wa">Kirim ke WhatsApp</button><button class="g" id="cl">Tutup</button></div></div>`;
+ const ta=o.querySelector('textarea');ta.value=msg;
+ o.querySelector('#cl').onclick=()=>o.remove();
+ o.querySelector('#wa').onclick=()=>{if(!num)return alert('Nomor WhatsApp klien tidak ditemukan di formulir.');window.open('https://wa.me/'+num+'?text='+encodeURIComponent(ta.value),'_blank')};
+ document.body.appendChild(o)}
 const cell=v=>v&&v.file?`<button class="g" data-ph="${esc(v.file)}">Lihat foto</button>`:esc(v);
 async function responses(f){app.innerHTML='<div class="card mut">Memuat data…</div>';const r=await api('listResponses',{id:f.id});if(!r.ok)return;const R=r.responses;
  app.innerHTML=`<div class="row sp" style="margin-bottom:12px"><h2 style="margin:0">${esc(f.title)}</h2><div class="row"><button class="gold" id="csv">Unduh CSV</button><button class="g" id="bk">← Kembali</button></div></div>
- <div class="card tw"><table><tr><th>Waktu</th>${f.fields.map(x=>`<th>${esc(x.label)}</th>`).join('')}<th></th></tr>
- ${R.map(x=>`<tr><td>${new Date(x.at).toLocaleString('id-ID')}</td>${f.fields.map(y=>`<td>${cell(x.data[y.label])}</td>`).join('')}<td><button class="d" data-id="${x.id}">Hapus</button></td></tr>`).join('')||`<tr><td colspan="${f.fields.length+2}" class="mut">Belum ada respon.</td></tr>`}</table></div>`;
+ <div class="card tw"><table><tr><th>Waktu</th>${f.fields.map(x=>`<th>${esc(x.label)}</th>`).join('')}<th>Tanggal Terapi</th><th>Jadwal Berikutnya</th><th>Pengingat</th><th></th></tr>
+ ${R.map(x=>`<tr><td>${new Date(x.at).toLocaleString('id-ID')}</td>${f.fields.map(y=>`<td>${cell(x.data[y.label])}</td>`).join('')}<td><input type="date" class="td" data-id="${x.id}" value="${esc(x.terapi||'')}" style="min-width:140px"></td><td class="nx" data-id="${x.id}" style="min-width:210px">${nxt(x.terapi)}</td><td><button class="gold" data-rm="${x.id}">Ingatkan Booking</button></td><td><button class="d" data-id="${x.id}">Hapus</button></td></tr>`).join('')||`<tr><td colspan="${f.fields.length+5}" class="mut">Belum ada respon.</td></tr>`}</table></div>`;
  $('#bk').onclick=dash;
+ app.querySelectorAll('input.td').forEach(e=>e.onchange=async()=>{const r2=await api('setTerapi',{id:e.dataset.id,date:e.value});if(!r2.ok)return alert(r2.error);R.find(y=>y.id===e.dataset.id).terapi=e.value;app.querySelector(`.nx[data-id="${e.dataset.id}"]`).innerHTML=nxt(e.value)});
+ app.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>remind(f,R.find(y=>y.id===b.dataset.rm)));
  app.querySelectorAll('[data-ph]').forEach(b=>b.onclick=async()=>{b.textContent='Memuat…';const r=await api('getFile',{fid:b.dataset.ph});b.textContent='Lihat foto';if(!r.ok)return alert(r.error);const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9';o.innerHTML='<img style="max-width:100%;max-height:100%;border-radius:6px">';o.firstChild.src=r.img;o.onclick=()=>o.remove();document.body.appendChild(o)});
- $('#csv').onclick=()=>{const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const rows=[['Waktu',...f.fields.map(x=>x.label)],...R.map(x=>[x.at,...f.fields.map(y=>{const v=x.data[y.label];return v&&v.name?v.name+' (foto di Drive)':v})])];
+ $('#csv').onclick=()=>{const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const rows=[['Waktu',...f.fields.map(x=>x.label),'Tanggal Terapi'],...R.map(x=>[x.at,...f.fields.map(y=>{const v=x.data[y.label];return v&&v.name?v.name+' (foto di Drive)':v}),x.terapi||''])];
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.map(r=>r.map(q).join(',')).join('\n')],{type:'text/csv'}));a.download=f.title+'.csv';a.click()};
  app.querySelectorAll('td button.d').forEach(b=>b.onclick=async()=>{if(confirm('Hapus respon ini?')){await api('deleteResponse',{id:b.dataset.id});responses(f)}})}
 route();
