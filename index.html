@@ -170,10 +170,19 @@ function doPost(e) {
       const r = load('responses.json'), x = r.find(y => y.id === q.id);
       if (!x) throw new Error('Data tidak ditemukan.');
       x.terapi = String(q.terapi || '').slice(0, 10);
-      x.next = String(q.next || '').slice(0, 10);
-      x.catatan = String(q.catatan || '').slice(0, 5000);
+      if (Array.isArray(q.kunjungan)) {
+        x.kunjungan = q.kunjungan.slice(0, 300).map(v => ({
+          tgl: String(v.tgl || '').slice(0, 10),
+          next: String(v.next || '').slice(0, 10),
+          catatan: String(v.catatan || '').slice(0, 5000)
+        }));
+        delete x.next; delete x.catatan;
+      } else {
+        x.next = String(q.next || '').slice(0, 10);
+        x.catatan = String(q.catatan || '').slice(0, 5000);
+      }
       save('responses.json', r);
-      return out({ ok: true });
+      return out({ ok: true, v: 2 });
     }
     if (a === 'setTerapi') {
       const r = load('responses.json'), x = r.find(y => y.id === q.id);
@@ -290,28 +299,38 @@ const loadPh=fid=>PH[fid]||(PH[fid]=(PQ=PQ.then(()=>api('getFile',{fid}).then(r=
 const IDL=/ktp|identitas|sim\b|paspor|kk\b|kartu/i;
 const phOf=(x,f)=>{const a=f.fields.filter(y=>y.type==='file'&&x.data[y.label]&&x.data[y.label].file),p=a.filter(y=>!IDL.test(y.label)),b=p.find(y=>/terbaru|pasien|diri|wajah|selfie/i.test(y.label))||p[0]||a[0];return b?x.data[b.label].file:''};
 const avatar=(x,f)=>{const id=phOf(x,f);return `<div class="av"${id?` data-av="${id}"`:''}>${id?'':'<span>Tanpa<br>foto</span>'}</div>`};
+async function persist(x,st){const k=(x.kunjungan||[]).filter(v=>!v._new).map(v=>({tgl:v.tgl||'',next:v.next||'',catatan:v.catatan||''}));
+ const s=await api('saveRekam',{id:x.id,terapi:x.terapi||'',kunjungan:k});const ok=s.ok&&s.v===2;
+ if(st){st.style.margin='0';st.className=ok?'ok':'err';st.textContent=ok?'Tersimpan ✓':(s.ok?'Kode server belum versi terbaru. Perbarui Apps Script.':s.error)}return ok}
+function renderV(x,box,st,rv){
+ const L=x.kunjungan.map((v,i)=>({v,i})).sort((a,b)=>(b.v.tgl||'').localeCompare(a.v.tgl||'')||b.i-a.i);
+ box.innerHTML=L.map(({v,i})=>v._edit||v._new?`<div class="fld" data-i="${i}"><label style="margin-top:0">Tanggal kunjungan</label><input type="date" data-vt value="${esc(v.tgl)}"><label>Catatan hasil pemeriksaan</label><textarea rows="4" data-vc>${esc(v.catatan)}</textarea><label>Kunjungan selanjutnya</label><input type="date" data-vn value="${esc(v.next)}"><div class="row" style="margin-top:12px"><button class="gold" data-vs>Simpan</button><button class="g" data-vx>Batal</button></div></div>`
+  :`<div class="fld" data-i="${i}"><div class="row sp"><b>${v.tgl?fmt(D(v.tgl)):'Tanpa tanggal'}</b><span class="row" style="flex:none;min-width:0;flex-wrap:nowrap"><button class="g" data-ve style="min-width:0;flex:none;padding:7px 14px;font-size:13px">Ubah</button><button class="d" data-vd style="min-width:0;flex:none;padding:7px 14px;font-size:13px">Hapus</button></span></div><div style="white-space:pre-wrap;margin:8px 0">${v.catatan?esc(v.catatan):'<span class="mut">Belum ada catatan</span>'}</div>${v.next?`<span class="badge">Kunjungan selanjutnya: ${fmt(D(v.next))}</span>`:''}</div>`).join('')||'<p class="mut">Belum ada riwayat kunjungan.</p>';
+ box.querySelectorAll('[data-i]').forEach(e=>{const i=+e.dataset.i,v=x.kunjungan[i],q=s=>e.querySelector(s);
+  if(q('[data-ve]'))q('[data-ve]').onclick=()=>{v._edit=true;rv()};
+  if(q('[data-vd]'))q('[data-vd]').onclick=async()=>{if(!confirm('Hapus catatan kunjungan ini?'))return;x.kunjungan.splice(i,1);await persist(x,st);rv()};
+  if(q('[data-vx]'))q('[data-vx]').onclick=()=>{if(v._new)x.kunjungan.splice(i,1);else delete v._edit;rv()};
+  if(q('[data-vs]'))q('[data-vs]').onclick=async()=>{v.tgl=q('[data-vt]').value;v.catatan=q('[data-vc]').value;v.next=q('[data-vn]').value;delete v._new;delete v._edit;await persist(x,st);rv()}})}
 async function rekam(){showNav(true);navOn('nv4');app.innerHTML='<div class="card mut">Memuat…</div>';
  let r=await api('listAll'),old=false;
  if(!r.ok&&/belum diperbarui/.test(r.error||'')){const l=await api('listForms');if(l.ok){let all=[];for(const f of l.forms){const q=await api('listResponses',{id:f.id});if(q.ok)all=all.concat(q.responses)}all.sort((a,b)=>String(b.at).localeCompare(String(a.at)));r={ok:true,forms:l.forms,responses:all};old=true}}
- if(!r.ok)return app.innerHTML=`<div class="card"><p class="err">${esc(r.error)}</p></div>`;const FM={};r.forms.forEach(f=>FM[f.id]=f);const A=r.responses;
+ if(!r.ok)return app.innerHTML=`<div class="card"><p class="err">${esc(r.error)}</p></div>`;const FM={};r.forms.forEach(f=>FM[f.id]=f);const A=r.responses;A.forEach(x=>{if(!Array.isArray(x.kunjungan))x.kunjungan=(x.catatan||x.next)?[{tgl:x.terapi||'',next:x.next||'',catatan:x.catatan||''}]:[]});
  const pv=(x,f)=>{const g=re=>{const y=f.fields.find(z=>re.test(z.label));return y&&typeof x.data[y.label]==='string'?x.data[y.label]:''};return{name:g(/nama/i),addr:g(/alamat/i),dob:g(/lahir/i)}};
  app.innerHTML=`${old?'<div class="card o"><b>Mode lihat saja.</b> Kolom Kunjungan selanjutnya &amp; Catatan belum bisa disimpan karena kode di Apps Script belum versi terbaru.<div style="margin-top:10px"><a href="#setup"><button class="g">Cara memperbarui</button></a></div></div>':''}<h2 class="big">Rekam<br>Medis</h2><div class="card"><div class="row"><div style="flex:1;min-width:160px"><label style="margin-top:0">Nama pasien</label><input id="fn" placeholder="Cari nama"></div><div style="flex:1;min-width:160px"><label style="margin-top:0">Alamat</label><input id="fa" placeholder="Cari alamat"></div><div style="flex:1;min-width:160px"><label style="margin-top:0">Tanggal lahir</label><input id="fd" type="date"></div></div><div class="row sp" style="margin-top:12px"><span class="mut" id="cnt"></span><button class="g" id="rs">Reset filter</button></div><p class="mut" style="margin:8px 0 0">Filter boleh diisi salah satu atau gabungan. Kosongkan untuk melewati.</p></div><div id="rl"></div>`;
  const draw=()=>{const fn=$('#fn').value.trim().toLowerCase(),fa=$('#fa').value.trim().toLowerCase(),fd=$('#fd').value;
   const rows=A.filter(x=>{const f=FM[x.formId];if(!f)return false;const p=pv(x,f);return(!fn||p.name.toLowerCase().includes(fn))&&(!fa||p.addr.toLowerCase().includes(fa))&&(!fd||dobMatch(p.dob,fd))});
   $('#cnt').textContent=rows.length+' data ditemukan';
   $('#rl').innerHTML=rows.map(x=>{const f=FM[x.formId],p=pv(x,f);return `<div class="card" data-id="${x.id}"><div class="row sp" style="align-items:flex-start;flex-wrap:nowrap"><div><span class="badge">${esc(f.type)}</span><h2 style="font-size:22px;margin-top:6px">${esc(p.name||'(tanpa nama)')}</h2><div class="mut">Lahir: ${esc(p.dob||'-')} · ${esc(p.addr||'Alamat belum diisi')}</div><div class="mut">${esc(f.title)} · diisi ${new Date(x.at).toLocaleDateString('id-ID')}</div><div style="margin-top:10px"><button class="g" data-rm>Ingatkan Booking</button></div></div>${avatar(x,f)}</div>
-  <div class="row"><div style="flex:1;min-width:150px"><label>Tanggal terapi</label><input type="date" data-k="terapi" value="${esc(x.terapi||'')}"></div><div style="flex:1;min-width:150px"><label>Kunjungan selanjutnya</label><input type="date" data-k="next" value="${esc(x.next||'')}"></div></div>
-  <div class="mut" data-nx style="margin-top:6px">${nxt(x.terapi)}</div>
-  <label>Catatan hasil pemeriksaan</label><textarea rows="4" data-k="catatan">${esc(x.catatan||'')}</textarea>
-  <div class="row" style="margin-top:12px"><button class="gold" data-sv>Simpan</button><span class="ok" data-st style="margin:0"></span></div>
+  <label>Tanggal terapi</label><input type="date" data-k="terapi" value="${esc(x.terapi||'')}"><div class="mut" data-nx style="margin-top:6px">${nxt(x.terapi)}</div><span class="ok" data-st></span>
+  <div class="row sp" style="margin-top:18px"><h2 style="font-size:19px;margin:0">Riwayat Kunjungan</h2><button class="gold" data-va>+ Tambah Kunjungan</button></div><div data-vb style="margin-top:8px"></div>
   <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:700">Lihat isian formulir</summary>${f.fields.map(y=>`<div style="margin-top:6px"><b>${esc(y.label)}</b>: ${cell(x.data[y.label])}</div>`).join('')}</details></div>`}).join('')||'<div class="card mut">Tidak ada data yang cocok.</div>';
   if(window._io)window._io.disconnect();
   window._io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;const d=e.target;window._io.unobserve(d);loadPh(d.dataset.av).then(src=>{if(src){d.innerHTML=`<img src="${src}" alt="">`;d.onclick=()=>viewImg(src)}else d.innerHTML='<span>Gagal<br>muat</span>'})}),{rootMargin:'200px'});
   $('#rl').querySelectorAll('[data-av]').forEach(d=>{d.innerHTML='<span>…</span>';window._io.observe(d)});
   $('#rl').querySelectorAll('.card[data-id]').forEach(c=>{const x=A.find(y=>y.id===c.dataset.id),f=FM[x.formId],k=n=>c.querySelector(`[data-k=${n}]`);
-   k('terapi').onchange=()=>c.querySelector('[data-nx]').innerHTML=nxt(k('terapi').value);
-   c.querySelector('[data-sv]').onclick=async()=>{const d={id:x.id,terapi:k('terapi').value,next:k('next').value,catatan:k('catatan').value},s=await api('saveRekam',d);const st=c.querySelector('[data-st]');
-    if(s.ok){Object.assign(x,{terapi:d.terapi,next:d.next,catatan:d.catatan});st.className='ok';st.textContent='Tersimpan ✓'}else{st.className='err';st.textContent=s.error}};
+   const st=c.querySelector('[data-st]'),vb=c.querySelector('[data-vb]'),rv=()=>renderV(x,vb,st,rv);rv();
+   k('terapi').onchange=async()=>{x.terapi=k('terapi').value;c.querySelector('[data-nx]').innerHTML=nxt(x.terapi);await persist(x,st)};
+   c.querySelector('[data-va]').onclick=()=>{x.kunjungan.push({tgl:new Date().toLocaleDateString('sv-SE'),next:'',catatan:'',_new:true});rv()};
    c.querySelector('[data-rm]').onclick=()=>{x.terapi=k('terapi').value;remind(f,x)};
    c.querySelectorAll('[data-ph]').forEach(b=>b.onclick=()=>showPhoto(b))})};
  ['#fn','#fa','#fd'].forEach(s=>$(s).oninput=draw);$('#rs').onclick=()=>{$('#fn').value=$('#fa').value=$('#fd').value='';draw()};draw()}
